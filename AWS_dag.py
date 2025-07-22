@@ -49,7 +49,7 @@ with DAG(
     'lead_conversion_master_pipeline',
     default_args=default_args,
     start_date=days_ago(1),
-    schedule=[redshift_table_dataset],  # Event-driven schedule
+    schedule=[redshift_table_dataset],
     catchup=False,
     tags=['mlops', 'aws', 'evidently', 'drift_detection'],
 ) as dag:
@@ -97,7 +97,7 @@ with DAG(
         kwargs['ti'].xcom_push(key='new_data_s3_key', value=s3_path)
 
     def check_data_drift(**kwargs):
-        """Generates drift reports using explicit column mapping and robust type handling."""
+        """Generates drift reports with robust data cleaning and type handling."""
         ti = kwargs['ti']
         new_data_s3_key = ti.xcom_pull(key='new_data_s3_key', task_ids='fetch_from_redshift')
         if not new_data_s3_key:
@@ -123,11 +123,17 @@ with DAG(
             if 'converted' in new_data.columns:
                 new_data = new_data.drop(columns=['converted'])
 
+            # ✅ **KEY FIX**: Remove columns that are completely empty in the new data
+            empty_cols = [col for col in new_data.columns if new_data[col].dropna().empty]
+            if empty_cols:
+                print(f"Warning: Found completely empty columns in new data. Dropping them: {empty_cols}")
+                new_data.drop(columns=empty_cols, inplace=True)
+                ref_data.drop(columns=empty_cols, inplace=True, errors='ignore')
+
             shared_columns = list(set(ref_data.columns) & set(new_data.columns))
             if not shared_columns:
                 raise ValueError("CRITICAL: No common columns found between reference and new data.")
 
-            # --- Robustly define column types to prevent TypeError ---
             numerical_cols = ref_data[shared_columns].select_dtypes(include=np.number).columns.tolist()
             categorical_cols = ref_data[shared_columns].select_dtypes(exclude=np.number).columns.tolist()
 
@@ -165,22 +171,31 @@ with DAG(
         return 'retrain_model' if drift_detected else 'skip_retraining'
 
     def run_ml_pipeline_locally(**kwargs):
-        """Downloads and executes the ML training script."""
+        """Downloads, combines data, and executes the ML training script."""
         ti = kwargs['ti']
         ds = kwargs['ds']
         s3_input_key = ti.xcom_pull(key='new_data_s3_key', task_ids='fetch_from_redshift')
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            local_script_path = os.path.join(tmpdir, "pipeline.py")
-            local_data_path = os.path.join(tmpdir, 'data.csv')
-
             s3 = boto3.client('s3')
+            local_script_path = os.path.join(tmpdir, "pipeline.py")
+            new_data_path = os.path.join(tmpdir, 'new_data.csv')
+            ref_data_path = os.path.join(tmpdir, 'ref_data.csv')
+            
             s3.download_file(S3_BUCKET, S3_MAIN_SCRIPT_KEY, local_script_path)
-            s3.download_file(S3_BUCKET, s3_input_key, local_data_path)
+            s3.download_file(S3_BUCKET, s3_input_key, new_data_path)
+            s3.download_file(S3_BUCKET, S3_REFERENCE_DATA_KEY, ref_data_path)
 
+            new_data = pd.read_csv(new_data_path)
+            ref_data = pd.read_csv(ref_data_path)
+            
+            combined_df = pd.concat([ref_data, new_data], ignore_index=True)
+            combined_data_path = os.path.join(tmpdir, 'combined_training_data.csv')
+            combined_df.to_csv(combined_data_path, index=False)
+            
             script_args = [
                 sys.executable, local_script_path,
-                "--data-path", local_data_path,
+                "--data-path", combined_data_path,
                 "--s3-bucket", S3_BUCKET,
                 "--s3-artifact-prefix", S3_ARTIFACT_PREFIX,
                 "--mlflow-uri", MLFLOW_TRACKING_URI,
@@ -226,4 +241,4 @@ with DAG(
     install_deps >> fetch_data_task >> check_drift_task >> branching_task
     branching_task >> [retrain_model_task, skip_retraining_task]
     retrain_model_task >> end_pipeline_task
-    skip_retraining_task >> end_pipeline_task 
+    skip_retraining_task >> end_pipeline_task
