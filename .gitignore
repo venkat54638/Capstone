@@ -1,0 +1,55 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environment
+venv/
+ENV/
+env/
+.venv/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# OS-specific and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+*.swp
+
+# Machine learning/artifacts/output
+*.joblib
+*.pkl
+*.h5
+*.ckpt
+best_model.joblib
+preprocessor.joblib
+model_columns.json
+saved_models/
+mlruns/
+
+mlartifacts/
+
+
+# Data files (comment if you want to version control specific files)
+*.csv
+*.tsv
+*.parquet
+*.xlsx
+*.db
+
+# Docker (if not versioning these)
+
+
+# Logs and output
+*.log
+
+# Ignore secrets (add to .gitignore if you have secret/config files)
+*.env
