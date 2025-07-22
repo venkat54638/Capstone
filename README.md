@@ -1,8 +1,6 @@
 
 
-### README.md
 
-Here's a structured overview of the project:
 
 ### **Project Title**
 ML Project Template  
